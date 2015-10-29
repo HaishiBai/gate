@@ -30,10 +30,14 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Component
 import retrofit.RetrofitError
 import retrofit.converter.ConversionException
+import rx.Observable
+import rx.Scheduler
+import rx.schedulers.Schedulers
 
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 @CompileStatic
@@ -41,6 +45,8 @@ import java.util.concurrent.atomic.AtomicReference
 @Slf4j
 class ApplicationService {
   private static final String GROUP = "applications"
+
+  private Scheduler scheduler = Schedulers.io()
 
   @Autowired
   ServiceConfiguration serviceConfiguration
@@ -56,10 +62,18 @@ class ApplicationService {
 
   private AtomicReference<List<Map>> allApplicationsCache = new AtomicReference<>([])
 
-  List<Map> getAll() {
-    def applicationListRetrievers = buildApplicationListRetrievers()
+  ApplicationService() {
+    Observable
+      .timer(30000, TimeUnit.MILLISECONDS, scheduler)
+      .repeat()
+      .subscribe({ Long interval -> tick() })
+  }
 
-    HystrixFactory.newListCommand(GROUP, "getAll", true, {
+  void tick() {
+    log.info("Refreshing Application List")
+
+    def applicationListRetrievers = buildApplicationListRetrievers()
+    def applications = HystrixFactory.newListCommand(GROUP, "getAll", {
       List<Future<List<Map>>> futures = executorService.invokeAll(applicationListRetrievers)
       List<List<Map>> all = futures.collect { it.get() } // spread operator doesn't work here; no clue why.
       List<Map> flat = (List<Map>) all?.flatten()?.toList()
@@ -67,21 +81,26 @@ class ApplicationService {
         it.attributes
       } as List<Map>
 
-      allApplicationsCache.set(mergedApplications)
-
       return mergedApplications
     }, { return allApplicationsCache.get() }).execute()
+
+    allApplicationsCache.set(applications)
+    log.info("Refreshed Application List")
+  }
+
+  List<Map> getAll() {
+    return allApplicationsCache.get()
   }
 
   Map get(String name) {
     def applicationRetrievers = buildApplicationRetrievers(name)
 
-    HystrixFactory.newMapCommand(GROUP, "getAppByName", true, {
+    HystrixFactory.newMapCommand(GROUP, "getAppByName", {
       try {
         def futures = executorService.invokeAll(applicationRetrievers)
         List<Map> applications = (List<Map>) futures.collect { it.get() }
 
-        def mergedApps = mergeApps(applications, serviceConfiguration.getService('front50'))
+        List<Map> mergedApps = mergeApps(applications, serviceConfiguration.getService('front50'))
         return mergedApps ? mergedApps[0] : null
       } catch (Exception e) {
         log.error("Unable to retrieve application '${name}'", e)
@@ -95,7 +114,7 @@ class ApplicationService {
       return []
     }
 
-    HystrixFactory.newListCommand(GROUP, "getPipelineConfigsForApplication", true) {
+    HystrixFactory.newListCommand(GROUP, "getPipelineConfigsForApplication") {
       front50Service.getPipelineConfigs(app)
     } execute()
   }
@@ -104,8 +123,27 @@ class ApplicationService {
     if (!front50Service) {
       return null
     }
-    HystrixFactory.newMapCommand(GROUP, "getPipelineConfigForApplicationAndPipeline", true) {
+    HystrixFactory.newMapCommand(GROUP, "getPipelineConfigForApplicationAndPipeline") {
       front50Service.getPipelineConfigs(app).find { it.name == pipelineName }
+    } execute()
+  }
+
+  List<Map> getStrategyConfigs(String app) {
+    if (!front50Service) {
+      return []
+    }
+
+    HystrixFactory.newListCommand(GROUP, "getStrategyConfigForApplication") {
+      front50Service.getStrategyConfigs(app)
+    } execute()
+  }
+
+  Map getStrategyConfig(String app, String strategyName) {
+    if (!front50Service) {
+      return null
+    }
+    HystrixFactory.newMapCommand(GROUP, "getStrategyConfigForApplicationAndStrategy") {
+      front50Service.getStrategyConfigs(app).find { it.name == strategyName }
     } execute()
   }
 
@@ -305,7 +343,7 @@ class ApplicationService {
         try {
           return oort.getApplication(name)
         } catch (RetrofitError e) {
-          if (e.response.status == 404) {
+          if (e.response?.status == 404) {
             return [:]
           } else {
             throw e

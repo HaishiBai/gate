@@ -18,16 +18,14 @@ package com.netflix.spinnaker.gate.controllers
 
 import com.netflix.spinnaker.gate.services.ApplicationService
 import com.netflix.spinnaker.gate.services.ExecutionHistoryService
-import com.netflix.spinnaker.gate.services.PipelineService
 import com.netflix.spinnaker.gate.services.TaskService
+import com.netflix.config.DynamicIntProperty
 import groovy.transform.CompileStatic
 import groovy.transform.InheritConstructors
 import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpEntity
-import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
 @CompileStatic
@@ -35,6 +33,9 @@ import org.springframework.web.bind.annotation.*
 @RestController
 @Slf4j
 class ApplicationController {
+
+  static final String PIPELINE_EXECUTION_LIMIT = 'gate.execution.fetch.limit'
+  static final DynamicIntProperty executionLimit = new DynamicIntProperty(PIPELINE_EXECUTION_LIMIT, 10)
 
   @Autowired
   ApplicationService applicationService
@@ -45,8 +46,8 @@ class ApplicationController {
   @Autowired
   TaskService taskService
 
-  @Autowired(required = false)
-  PipelineService pipelineService
+  @Autowired
+  PipelineController pipelineController
 
   @RequestMapping(method = RequestMethod.GET)
   List<Map> all() {
@@ -73,8 +74,10 @@ class ApplicationController {
 
   @RequestMapping(value = "/{application}/pipelines", method = RequestMethod.GET)
   List getPipelines(@PathVariable("application") String application,
-                    @RequestParam(value = "limit", defaultValue = "10") int limit) {
-    executionHistoryService.getPipelines(application, limit)
+                    @RequestParam(value = "limit", required = false) Integer limit) {
+    def listLimit = limit ?: executionLimit.get()
+    log.info("execution fetch limit: ${listLimit}")
+    executionHistoryService.getPipelines(application, listLimit)
   }
 
   /**
@@ -99,6 +102,19 @@ class ApplicationController {
     }
   }
 
+  @RequestMapping(value = "/{application}/strategyConfigs", method = RequestMethod.GET)
+  List getStrategyConfigs(@PathVariable("application") String application) {
+    applicationService.getStrategyConfigs(application)
+  }
+
+  @RequestMapping(value = "/{application}/strategyConfigs/{strategyName:.+}", method = RequestMethod.GET)
+  Map getStrategyConfig(
+    @PathVariable("application") String application, @PathVariable("strategyName") String strategyName) {
+    applicationService.getStrategyConfigs(application).find {
+      it.name == strategyName
+    }
+  }
+
   /**
    * @deprecated  Use PipelineController instead for pipeline operations.
    */
@@ -108,21 +124,7 @@ class ApplicationController {
                                   @PathVariable("pipelineName") String pipelineName,
                                   @RequestBody(required = false) Map trigger,
                                   @RequestParam(required = false, value = "user") String user) {
-    //TODO(cfieber) - remove the request param and make the body required once this is rolled all the way
-    if (trigger == null) {
-      trigger = [:]
-    }
-
-    if (!trigger.user) {
-      trigger.user = (user ?: 'anonymous')
-    }
-
-    try {
-      def body = pipelineService.trigger(application, pipelineName, trigger)
-      new ResponseEntity(body, HttpStatus.ACCEPTED)
-    } catch (e) {
-      new ResponseEntity([message: e.message], new HttpHeaders(), HttpStatus.UNPROCESSABLE_ENTITY)
-    }
+    return pipelineController.invokePipelineConfig(application, pipelineName, trigger)
   }
 
   /**

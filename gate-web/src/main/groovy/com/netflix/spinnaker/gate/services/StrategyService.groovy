@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Netflix, Inc.
+ * Copyright 2014 Netflix, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,41 +17,38 @@
 
 package com.netflix.spinnaker.gate.services
 
-import com.netflix.spinnaker.gate.services.commands.HystrixFactory
 import com.netflix.spinnaker.gate.services.internal.Front50Service
-import com.netflix.spinnaker.gate.services.internal.OrcaService
 import groovy.transform.CompileStatic
+import groovy.transform.InheritConstructors
 import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
+import org.springframework.web.bind.annotation.ResponseStatus
 
 @CompileStatic
 @Component
 @Slf4j
-class ProjectService {
-  private static final String GROUP = "projects"
-
-  @Autowired
+class StrategyService {
+  @Autowired(required = false)
   Front50Service front50Service
 
   @Autowired
-  OrcaService orcaService
+  ApplicationService applicationService
 
-  List<Map> getAll() {
-    HystrixFactory.newListCommand(GROUP, "getAll") {
-      return front50Service.getAllProjects().embedded.projects ?: []
-    } execute()
+  void deleteForApplication(String applicationName, String strategyName) {
+    front50Service.deleteStrategyConfig(applicationName, strategyName)
   }
 
-  Map get(String id) {
-    HystrixFactory.newMapCommand(GROUP, "get") {
-      front50Service.getProject(id)
-    } execute()
+  void save(Map strategy) {
+    front50Service.saveStrategyConfig(strategy)
   }
 
-  List<Map> getAllPipelines(String projectId, int limit) {
-    HystrixFactory.newListCommand(GROUP, "getAllPipelines") {
-      return orcaService.getPipelinesForProject(projectId, limit)
-    } execute()
+  void move(Map moveCommand) {
+    front50Service.moveStrategyConfig(moveCommand)
   }
+
+  @InheritConstructors
+  @ResponseStatus(value = HttpStatus.NOT_FOUND, reason = "strategy config not found!")
+  static class StrategyConfigNotFoundException extends RuntimeException {}
 }

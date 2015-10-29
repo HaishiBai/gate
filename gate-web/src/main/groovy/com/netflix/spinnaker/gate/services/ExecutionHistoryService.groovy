@@ -19,6 +19,7 @@ package com.netflix.spinnaker.gate.services
 
 import com.google.common.base.Preconditions
 import com.netflix.spinnaker.gate.services.commands.HystrixFactory
+import com.netflix.spinnaker.gate.services.commands.ThrottledRequestException
 import com.netflix.spinnaker.gate.services.internal.OrcaService
 import groovy.transform.CompileStatic
 import groovy.util.logging.Slf4j
@@ -34,15 +35,18 @@ class ExecutionHistoryService {
 
   List getTasks(String app) {
     Preconditions.checkNotNull(app)
-    HystrixFactory.newListCommand("taskExecutionHistory", "getTasksForApp", true) {
+
+    def command = HystrixFactory.newListCommand("taskExecutionHistory", "getTasksForApp") {
       orcaService.getTasks(app)
-    } execute()
+    }
+    return command.execute()
   }
 
   List getPipelines(String app, int limit) {
     Preconditions.checkNotNull(app)
-    HystrixFactory.newListCommand("pipelineExecutionHistory", "getPipelinesForApp", true) {
+    def command = HystrixFactory.newListCommand("pipelineExecutionHistory", "getPipelinesForApp") {
       orcaService.getPipelinesV2(app, limit)
-    } execute()
+    }
+    return command.execute()
   }
 }

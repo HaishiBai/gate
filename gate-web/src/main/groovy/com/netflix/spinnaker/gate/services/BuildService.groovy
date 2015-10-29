@@ -17,11 +17,16 @@
 
 package com.netflix.spinnaker.gate.services
 
+import com.netflix.hystrix.exception.HystrixBadRequestException
 import com.netflix.spinnaker.gate.services.commands.HystrixFactory
 import com.netflix.spinnaker.gate.services.internal.IgorService
 import groovy.transform.CompileStatic
+import groovy.transform.InheritConstructors
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
+import org.springframework.web.bind.annotation.ResponseStatus
+import retrofit.RetrofitError
 
 @CompileStatic
 @Component
@@ -35,7 +40,7 @@ class BuildService {
     if (!igorService) {
       return []
     }
-    HystrixFactory.newListCommand(GROUP, "masters", true) {
+    HystrixFactory.newListCommand(GROUP, "masters") {
       igorService.getBuildMasters()
     } execute()
   }
@@ -45,8 +50,16 @@ class BuildService {
     if (!igorService) {
       return []
     }
-    HystrixFactory.newListCommand(GROUP, "jobsForBuildMaster",true) {
-      igorService.getJobsForBuildMaster(buildMaster)
+    HystrixFactory.newListCommand(GROUP, "jobsForBuildMaster") {
+      try {
+        igorService.getJobsForBuildMaster(buildMaster)
+      } catch (RetrofitError e) {
+        if (e.response?.status == 404) {
+          throw new BuildMasterNotFound("Build master '${buildMaster}' not found")
+        }
+
+        throw e
+      }
     } execute()
   }
 
@@ -54,8 +67,16 @@ class BuildService {
     if (!igorService) {
       return [:]
     }
-    HystrixFactory.newMapCommand(GROUP, "jobConfig",true) {
-      igorService.getJobConfig(buildMaster, job)
+    HystrixFactory.newMapCommand(GROUP, "jobConfig") {
+      try {
+        igorService.getJobConfig(buildMaster, job)
+      } catch (RetrofitError e) {
+        if (e.response?.status == 404) {
+          throw new BuildMasterNotFound("Build master '${buildMaster}' not found")
+        }
+
+        throw e
+      }
     } execute()
   }
 
@@ -63,8 +84,16 @@ class BuildService {
     if (!igorService) {
       return []
     }
-    HystrixFactory.newListCommand(GROUP, "buildsForJob",true) {
-      igorService.getBuilds(buildMaster, job)
+    HystrixFactory.newListCommand(GROUP, "buildsForJob") {
+      try {
+        igorService.getBuilds(buildMaster, job)
+      } catch (RetrofitError e) {
+        if (e.response?.status == 404) {
+          throw new BuildMasterNotFound("Build master '${buildMaster}' not found")
+        }
+
+        throw e
+      }
     } execute()
   }
 
@@ -72,8 +101,20 @@ class BuildService {
     if (!igorService) {
       return [:]
     }
-    HystrixFactory.newMapCommand(GROUP, "buildDetails",true) {
-      igorService.getBuild(buildMaster, job, number)
+    HystrixFactory.newMapCommand(GROUP, "buildDetails") {
+      try {
+        igorService.getBuild(buildMaster, job, number)
+      } catch (RetrofitError e) {
+        if (e.response?.status == 404) {
+          throw new BuildMasterNotFound("Build master '${buildMaster}' not found")
+        }
+
+        throw e
+      }
     } execute()
   }
+
+  @ResponseStatus(HttpStatus.NOT_FOUND)
+  @InheritConstructors
+  static class BuildMasterNotFound extends HystrixBadRequestException {}
 }
